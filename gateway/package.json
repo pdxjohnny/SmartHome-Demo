@@ -17,7 +17,6 @@
   "dependencies": {
     "iot-rest-api-server": "0.6.0",
     "express": "*",
-    "websocket": "*",
-    "http": "*"
+    "websocket": "*"
   }
 }

@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package collector;
+
+service Connection {
+  rpc Open(stream Request) returns (stream Reply) {}
+}
+
+message Request {
+  string message = 1;
+}
+
+message Reply {
+  string message = 1;
+}
+

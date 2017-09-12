@@ -4,6 +4,7 @@
 log/*
 *.pid
 *.csr
+*_pb2*
 tools/smarthome-admin-portal/admin/dataset/*.csv
 tools/smarthome-admin-portal/admin/dataset/*.txt
 tools/smarthome-admin-portal/admin/static/images/model/*.png

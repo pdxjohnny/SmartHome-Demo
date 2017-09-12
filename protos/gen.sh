@@ -12,3 +12,4 @@ python \
   --python_out=collector/ \
   --grpc_python_out=collector/ \
   protos/collector.proto
+cp collector/*_pb2* smarthome-web-portal/RestClient/api/

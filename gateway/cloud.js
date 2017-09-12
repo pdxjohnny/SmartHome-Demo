@@ -1,29 +1,21 @@
-var PROTO_PATH = __dirname + '/../protos/collector.proto';
-
 var grpc = require('grpc');
-var collector = grpc.load(PROTO_PATH).collector;
+var rest = require('iot-rest-api-server');
+var Client = require('./client.js');
 
 function main() {
-  console.log(collector);
-  var client = new collector.Connection('127.0.0.1:50051',
-                                       grpc.credentials.createInsecure());
-
-  var call = client.open();
-  call.on('data', function(note) {
-    console.log(note)
-    console.log('Got message "' + note.message + '" at ' +
-        note.location.latitude + ', ' + note.location.longitude);
-
-		call.write(note);
-  });
-
-  call.on('end', function(note) {
-    console.log('Got message "' + note.message + '" at ' +
-        note.location.latitude + ', ' + note.location.longitude);
-
-		call.write(note);
-  });
-  call.end();
+    var client = new Client('127.0.0.1:50051', grpc.credentials.createInsecure());
+    client.connect().then(function(data) {
+        console.log('Connected', data);
+        client.wait({'name': 'test'}).then(function(data) {
+            console.log('Got wait', data);
+            client.end();
+        }).catch(function(data) {
+            console.log('Failed to wait', data);
+            client.end();
+        });
+    }).catch(function(data) {
+        console.log('Failed to connect', data);
+    });
 }
 
 main();

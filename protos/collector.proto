@@ -3,14 +3,18 @@ syntax = "proto3";
 package collector;
 
 service Connection {
-  rpc Open(stream Request) returns (stream Reply) {}
+  rpc Open(stream Request) returns (stream Response) {}
 }
 
 message Request {
-  string message = 1;
+  int32 xid = 1;
+  string method = 2;
+  string payload = 3;
 }
 
-message Reply {
-  string message = 1;
+message Response {
+  int32 xid = 1;
+  int32 code = 2;
+  string headers = 3;
+  string payload = 4;
 }
-

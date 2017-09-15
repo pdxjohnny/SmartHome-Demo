@@ -7,8 +7,10 @@ import logging
 import socket
 import select
 import pickle
+import struct
 import json
 import time
+import multiprocessing
 
 from RestClient.api import ApiClient, IoTResponse
 from RestClient import __version__
@@ -21,59 +23,103 @@ import grpc
 import collector_pb2
 import collector_pb2_grpc
 
-_CLIENTS = {}
+STRUCT_FMT = '!Q'
 
 def qr(res, code, payload):
     res.code = code
     res.payload = payload
     return res
 
+def lenpickle(writer, res):
+    w = getattr(writer, 'sendall', getattr(writer, 'send'))
+    msg = pickle.dumps(res)
+    length = struct.pack(STRUCT_FMT, len(msg))
+    return length + msg
+
+def lenunpickle(reader):
+    r = getattr(reader, 'recv', getattr(reader, 'read'))
+    length = struct.unpack(STRUCT_FMT, i.recv(8))
+    response = collector_pb2.Response()
+    response.xid = i.xid
+    response.code = 200
+    response.headers = ''
+    response.payload = pickle.loads(i.read(length))
+    msg = pickle.dumps(res)
+    length = struct.pack(struct_fmt, len(msg))
+    return length + msg
+
+class Message(object):
+
+    def __init__(self, data, recv_next=False, **kwargs):
+        self.data = data
+        self.recv_next = recv_next
+        self.kwargs = kwargs
+
 class Connection(collector_pb2_grpc.ConnectionServicer):
 
+    queue_class = multiprocessing.Queue().__class__
+
+    def __init__(self, *args, **kwargs):
+        collector_pb2_grpc.ConnectionServicer.__init__(self, *args, **kwargs)
+        self.clients = {}
+
+    def send(self, client, data, **kwargs):
+        if not client in self.clients:
+            raise ValueError('Client not connected')
+        self.clients[client][0].put(Message(data, **kwargs))
+
+    def recv(self, client, data):
+        if not client in self.clients:
+            raise ValueError('Client not connected')
+        return self.clients[client][1].get()
+
     def Open(self, reqs, context):
+        recv_next = False
+        from_client = None
         for i in reqs:
-            response = collector_pb2.Response()
-            response.xid = i.xid
-            response.code = 200
-            response.headers = ''
-            response.payload = ''
+            res = collector_pb2.Response()
+            res.xid = i.xid
+            res.code = 200
+            res.headers = ''
+            res.payload = ''
             data = {}
             if len(i.payload):
                 try:
                     data = json.loads(i.payload)
                 except Exception as e:
-                    response.code = 400
-                    response.payload = str(e)
-                    yield response
+                    res.code = 400
+                    res.payload = str(e)
+                    yield res
                     continue
             if i.method.startswith('handle_'):
-                response.code = 400
-                response.payload = 'Invalid Method'
-                yield response
+                res.code = 400
+                res.payload = 'Invalid Method'
+                yield res
                 continue
             try:
-                response = getattr(self, 'handle_{}'.format(i.method))(i,
-                        response, data)
-                if hasattr(response, 'fileno'):
-                    r, w, e = select.select([response], [], [])
-                    for i in r:
-                        length = int.from_bytes(i.recv(8), byteorder='big')
-                        response = collector_pb2.Response()
-                        response.xid = i.xid
-                        response.code = 200
-                        response.headers = ''
-                        response.payload = pickle.loads(i.read(length))
-                yield response
+                if recv_next:
+                    recv_next = False
+                    from_client.put(i)
+                res = getattr(self, 'handle_{}'.format(i.method))(i,
+                        res, data)
+                if isinstance(res, tuple) and isinstance(res[0], self.queue_class):
+                    to_client, from_client = res
+                    res = to_client.get()
+                    if res.recv_next:
+                        recv_next = True
+                        continue
+                    res = res.data
+                yield res
                 continue
-            except AttributeError:
-                response.code = 501
-                response.payload = 'Not Implemented'
-                yield response
+            except AttributeError as e:
+                res.code = 501
+                res.payload = 'Not Implemented' + ' ERROR: ' + str(e)
+                yield res
                 continue
             except Exception as e:
-                response.code = 500
-                response.payload = str(e)
-                yield response
+                res.code = 500
+                res.payload = str(e)
+                yield res
                 continue
 
     def handle_connect(self, req, res, data):
@@ -82,10 +128,19 @@ class Connection(collector_pb2_grpc.ConnectionServicer):
     def handle_wait(self, req, res, data):
         if not 'name' in data:
             return qr(res, 400, 'Missing name')
-        if data['name'] in _CLIENTS:
-            return qr(res, 500, 'Name already waiting')
-        r, _CLIENTS[data['name']] = socket.socketpair()
-        return r
+        if data['name'] in self.clients:
+            self.send(data['name'], 'ping')
+            try:
+                r = self.recv(data['name'])
+                print('self.recv(', data['name'], ')')
+                if r == 'pong':
+                    return qr(res, 500, 'Name already waiting')
+            except: pass
+        r, w = self.clients[data['name']] = (multiprocessing.Queue(),
+                multiprocessing.Queue())
+        return (r, w)
+
+SERVER = Connection()
 '''
     {
         'name': 'lab',
@@ -99,12 +154,17 @@ class Connection(collector_pb2_grpc.ConnectionServicer):
 
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    collector_pb2_grpc.add_ConnectionServicer_to_server(Connection(), server)
+    collector_pb2_grpc.add_ConnectionServicer_to_server(SERVER, server)
     server.add_insecure_port('[::]:50051')
     server.start()
     try:
         while True:
-            time.sleep(60 * 60 * 24)
+            i = raw_input(">>> ")
+            print('Got:', i)
+            i = i.split(' ')
+            client = i[0]
+            msg = ' '.join(i[1:])
+            SERVER.send(client, msg)
     except KeyboardInterrupt:
         server.stop(0)
 

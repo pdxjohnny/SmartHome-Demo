@@ -2,12 +2,11 @@ var grpc = require('grpc');
 var collector = require('./collector.js');
 
 class Client {
-  constructor (server, creds) {
+  constructor () {
     this.callbacks = {};
-    this.client = new collector.Connection(server, creds);
-    this.s = this.client.open();
-    this.s.on('data', this.ondata.bind(this));
-    this.s.on('end', this.onend.bind(this));
+  }
+
+  open (server, creds) {
   }
 
   ondata (data) {
@@ -35,11 +34,17 @@ class Client {
   write (method, data, resolve, reject) {
     var xid = Math.floor(Math.random() * 10000000);
     this.callbacks[xid] = {'resolve': resolve, 'reject': reject};
+    console.log('write(', xid, ',', method, ',', data, ')');
     return this.s.write(new collector.Request(xid, method, JSON.stringify(data)));
   }
 
-  connect (data) {
+  connect (server, creds, data) {
     return new Promise(function(resolve, reject) {
+      this.client = new collector.Connection(server, creds);
+      console.log(this.client);
+      this.s = this.client.open();
+      this.s.on('data', this.ondata.bind(this));
+      this.s.on('end', this.onend.bind(this));
       this.write('connect', data, resolve, reject);
     }.bind(this));
   }
